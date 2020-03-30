@@ -13,9 +13,9 @@
 # limitations under the License.
 
 # Use the latest stable golang 1.x to compile to a binary
-FROM golang:1 as build
+FROM golang:alpine3.11 as build
 
-ARG VERSION="1.16"
+ARG VERSION="1.16-bp"
 
 WORKDIR /go/src/cloudsql-proxy
 COPY . .
@@ -24,5 +24,13 @@ RUN go get ./...
 RUN go build -ldflags "-X 'main.versionString=$VERSION'" -o cloud_sql_proxy ./cmd/cloud_sql_proxy
 
 # Final Stage
-FROM gcr.io/distroless/base
+FROM alpine
+
+RUN apk add --no-cache ca-certificates
+
+RUN apk add --update tzdata; \
+  cp /usr/share/zoneinfo/Europe/Berlin /etc/localtime; \
+  echo "Europe/Berlin" >/etc/timezone; \
+  apk del tzdata
+
 COPY --from=build /go/src/cloudsql-proxy/cloud_sql_proxy /cloud_sql_proxy
