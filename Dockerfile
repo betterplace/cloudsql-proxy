@@ -13,7 +13,7 @@
 # limitations under the License.
 
 # Use the latest stable golang 1.x to compile to a binary
-FROM golang:alpine3.11 as build
+FROM golang:alpine3.12 as build
 
 ARG VERSION="1.18-bp"
 
