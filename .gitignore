@@ -7,3 +7,5 @@ cmd/cloud_sql_proxy/cloud_sql_proxy
 
 # Compiled during tests
 tests/cloud_sql_proxy
+/gospace
+/tags

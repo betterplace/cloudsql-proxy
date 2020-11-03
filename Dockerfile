@@ -24,7 +24,7 @@ RUN go get ./...
 RUN go build -ldflags "-X 'main.versionString=$VERSION'" -o cloud_sql_proxy ./cmd/cloud_sql_proxy
 
 # Final Stage
-FROM alpine
+FROM alpine:3.12.1
 
 RUN apk add --no-cache ca-certificates
 
