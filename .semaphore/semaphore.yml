@@ -21,4 +21,4 @@ blocks:
       jobs:
         - name: Building and pushing
           commands:
-            - make build push-latest
+            - make build push-latest REVISION=$SEMAPHORE_GIT_TAG_NAME
