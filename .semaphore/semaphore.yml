@@ -21,6 +21,5 @@ blocks:
       jobs:
         - name: Building and pushing
           commands:
-            - make build
-            - test "$SEMAPHORE_GIT_BRANCH" = "master" && make push-latest
-
+            - make build REVISION=$SEMAPHORE_GIT_TAG_NAME
+            - test "$SEMAPHORE_GIT_BRANCH" = "master" && make push-latest REVISION=$SEMAPHORE_GIT_TAG_NAME
