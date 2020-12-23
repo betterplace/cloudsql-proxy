@@ -1,6 +1,9 @@
+# direnv
+.envrc
 
-# Jetbrains IDE
+# IDEs
 .idea/
+.vscode/
 
 # Compiled binary
 cmd/cloud_sql_proxy/cloud_sql_proxy

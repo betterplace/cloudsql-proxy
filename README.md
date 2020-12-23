@@ -9,9 +9,9 @@ are used.
 To build from source, ensure you have [go installed](https://golang.org/doc/install)
 and have set [GOPATH](https://github.com/golang/go/wiki/GOPATH). Then, simply do a go get:
 
-    go get github.com/GoogleCloudPlatform/cloudsql-proxy/cmd/cloud_sql_proxy
+    GO111MODULE=on go get github.com/GoogleCloudPlatform/cloudsql-proxy/cmd/cloud_sql_proxy
 
-The cloud_sql_proxy will be placed in $GOPATH/bin after go get completes.
+The cloud_sql_proxy will be placed in `$GOPATH/bin` after `go get` completes.
 
 cloud_sql_proxy takes a few arguments to configure what instances to connect to and connection behavior:
 
@@ -36,6 +36,7 @@ cloud_sql_proxy takes a few arguments to configure what instances to connect to 
   down the proxy. Defaults to 0.
 * `-skip_failed_instance_config`: Setting this flag will allow you to prevent the proxy from terminating when
 	some instance configurations could not be parsed and/or are unavailable.
+* `-log_debug_stdout=true`: This is to log non-error output to stdOut instead of stdErr. For example, if you don't want connection related messages to log as errors, set this flag to true. Defaults to false.
 
 Note: `-instances` and `-instances_metadata` may be used at the same time but
 are not compatible with the `-fuse` flag.
@@ -94,14 +95,28 @@ instead of passing this flag.
 
 ## Container Images
 
-For convenience, we currently host containerized versions of the proxy in the following GCR repos:
+For convenience, we maintain several containerized versions. These images are 
+currently hosted in the following GCR repositories:
    * `gcr.io/cloudsql-docker/gce-proxy`
    * `us.gcr.io/cloudsql-docker/gce-proxy`
    * `eu.gcr.io/cloudsql-docker/gce-proxy`
    * `asia.gcr.io/cloudsql-docker/gce-proxy`
 
-Images are tagged to the version of the proxy they contain. It's strongly suggested to use the
-latest version of the proxy, and to update the version often.
+__Note:__ 
+
+Each image is tagged with the version of the proxy it was released with. The 
+following tags are currently supported:
+  * `$VERSION` - default image (recommended)
+  * `$VERSION-alpine` - uses [`alpine:3`](https://hub.docker.com/_/alpine) as a base image (only supported from v1.17 up)
+  * `$VERSION-buster` - uses [`debian:buster`](https://hub.docker.com/_/debian) as a base image (only supported from v1.17 up)
+
+__Note:__ We strongly recommend to always use the latest version of the proxy,
+and to update the version regularly. However, we recommend pinning to a
+specific tag and avoid the `latest` tag. Additionally, please note that
+the tagged version is _only_ that of the proxy - changes in base images may 
+break specific setups, even on non-major version increments. As such,
+it's a best practice to test changes before deployment, and use automated
+rollbacks to revert potential failures. 
 
 ## To use from Kubernetes:
 
@@ -121,7 +136,7 @@ __WARNING__: _These distributions are not officially supported by Google._
 
 ### K8s Cluster Service using Helm
 
-  Follow these [instructions](https://github.com/kubernetes/charts/tree/master/stable/gcloud-sqlproxy).
+  Follow these [instructions](https://github.com/rimusz/charts/tree/master/stable/gcloud-sqlproxy).
   This chart creates a Deployment and a Service, but we recommend deploying the proxy as a sidecar container in your pods.
 
 ### .Net Proxy Wrapper (Nuget Package)

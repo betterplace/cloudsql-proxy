@@ -1,4 +1,4 @@
-# Copyright 2019 Google LLC
+# Copyright 2020 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,4 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Format: //devtools/kokoro/config/proto/build.proto
+steps:
+- name: 'gcr.io/cloud-builders/docker'
+  args: 
+    - 'build'
+    - '--tag=gcr.io/$PROJECT_ID/gce-proxy:${_VERSION}'
+    - '--tag=us.gcr.io/$PROJECT_ID/gce-proxy:${_VERSION}'
+    - '--tag=eu.gcr.io/$PROJECT_ID/gce-proxy:${_VERSION}'
+    - '--tag=asia.gcr.io/$PROJECT_ID/gce-proxy:${_VERSION}'
+    - '.' 
+images: 
+  - 'gcr.io/$PROJECT_ID/gce-proxy:${_VERSION}'
+  - 'us.gcr.io/$PROJECT_ID/gce-proxy:${_VERSION}'
+  - 'eu.gcr.io/$PROJECT_ID/gce-proxy:${_VERSION}'
+  - 'asia.gcr.io/$PROJECT_ID/gce-proxy:${_VERSION}'

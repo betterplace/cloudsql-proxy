@@ -15,6 +15,7 @@
 package proxy
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
@@ -60,8 +61,30 @@ func (cs *blockingCertSource) Local(instance string) (tls.Certificate, error) {
 	}, nil
 }
 
-func (cs *blockingCertSource) Remote(instance string) (cert *x509.Certificate, addr, name string, err error) {
-	return &x509.Certificate{}, "fake address", "fake name", nil
+func (cs *blockingCertSource) Remote(instance string) (cert *x509.Certificate, addr, name, version string, err error) {
+	return &x509.Certificate{}, "fake address", "fake name", "fake version", nil
+}
+
+func TestContextDialer(t *testing.T) {
+	b := &fakeCerts{}
+	c := &Client{
+		Certs: &blockingCertSource{
+			map[string]*fakeCerts{
+				instance: b,
+			},
+			forever,
+		},
+		ContextDialer: func(context.Context, string, string) (net.Conn, error) {
+			return nil, errFakeDial
+		},
+		Dialer: func(string, string) (net.Conn, error) {
+			return nil, fmt.Errorf("this dialer should't be used when ContextDialer is set")
+		},
+	}
+
+	if _, err := c.DialContext(context.Background(), instance); err != errFakeDial {
+		t.Errorf("unexpected error: %v", err)
+	}
 }
 
 func TestClientCache(t *testing.T) {

@@ -15,6 +15,7 @@
 package proxy
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
@@ -53,7 +54,7 @@ type CertSource interface {
 	// provided instance.
 	Local(instance string) (tls.Certificate, error)
 	// Remote returns the instance's CA certificate, address, and name.
-	Remote(instance string) (cert *x509.Certificate, addr, name string, err error)
+	Remote(instance string) (cert *x509.Certificate, addr, name, version string, err error)
 }
 
 // Client is a type to handle connecting to a Server. All fields are required
@@ -68,9 +69,11 @@ type Client struct {
 	// Optionally tracks connections through this client. If nil, connections
 	// are not tracked and will not be closed before method Run exits.
 	Conns *ConnSet
-	// Dialer should return a new connection to the provided address. It is
-	// called on each new connection to an instance. net.Dial will be used if
-	// left nil.
+	// ContextDialer should return a new connection to the provided address.
+	// It is called on each new connection to an instance.
+	// If left nil, Dialer will be tried first, and if that one is nil too then net.Dial will be used.
+	ContextDialer func(ctx context.Context, net, addr string) (net.Conn, error)
+	// Dialer should return a new connection to the provided address. It will be used only if ContextDialer is nil.
 	Dialer func(net, addr string) (net.Conn, error)
 
 	// RefreshCfgThrottle is the amount of time to wait between configuration
@@ -100,9 +103,10 @@ type Client struct {
 type cacheEntry struct {
 	lastRefreshed time.Time
 	// If err is not nil, the addr and cfg are not valid.
-	err  error
-	addr string
-	cfg  *tls.Config
+	err     error
+	addr    string
+	version string
+	cfg     *tls.Config
 }
 
 // Run causes the client to start waiting for new connections to connSrc and
@@ -153,7 +157,7 @@ func (c *Client) handleConn(conn Conn) {
 // refreshCfg uses the CertSource inside the Client to find the instance's
 // address as well as construct a new tls.Config to connect to the instance. It
 // caches the result.
-func (c *Client) refreshCfg(instance string) (addr string, cfg *tls.Config, err error) {
+func (c *Client) refreshCfg(instance string) (addr string, cfg *tls.Config, version string, err error) {
 	c.refreshCfgL.Lock()
 	defer c.refreshCfgL.Unlock()
 
@@ -171,7 +175,7 @@ func (c *Client) refreshCfg(instance string) (addr string, cfg *tls.Config, err 
 	if oldok && time.Since(old.lastRefreshed) < throttle {
 		logging.Errorf("Throttling refreshCfg(%s): it was only called %v ago", instance, time.Since(old.lastRefreshed))
 		// Refresh was called too recently, just reuse the result.
-		return old.addr, old.cfg, old.err
+		return old.addr, old.cfg, old.version, old.err
 	}
 
 	defer func() {
@@ -180,6 +184,7 @@ func (c *Client) refreshCfg(instance string) (addr string, cfg *tls.Config, err 
 			lastRefreshed: time.Now(),
 			err:           err,
 			addr:          addr,
+			version:       version,
 			cfg:           cfg,
 		}
 		c.cacheL.Unlock()
@@ -187,12 +192,12 @@ func (c *Client) refreshCfg(instance string) (addr string, cfg *tls.Config, err 
 
 	mycert, err := c.Certs.Local(instance)
 	if err != nil {
-		return "", nil, err
+		return "", nil, "", err
 	}
 
-	scert, addr, name, err := c.Certs.Remote(instance)
+	scert, addr, name, version, err := c.Certs.Remote(instance)
 	if err != nil {
-		return "", nil, err
+		return "", nil, "", err
 	}
 	certs := x509.NewCertPool()
 	certs.AddCert(scert)
@@ -218,18 +223,18 @@ func (c *Client) refreshCfg(instance string) (addr string, cfg *tls.Config, err 
 	if timeToRefresh <= 0 {
 		err = fmt.Errorf("new ephemeral certificate expires too soon: current time: %v, certificate expires: %v", expire, now)
 		logging.Errorf("ephemeral certificate (%+v) error: %v", mycert, err)
-		return "", nil, err
+		return "", nil, "", err
 	}
 	go c.refreshCertAfter(instance, timeToRefresh)
 
-	return fmt.Sprintf("%s:%d", addr, c.Port), cfg, nil
+	return fmt.Sprintf("%s:%d", addr, c.Port), cfg, version, nil
 }
 
 // refreshCertAfter refreshes the epehemeral certificate of the instance after timeToRefresh.
 func (c *Client) refreshCertAfter(instance string, timeToRefresh time.Duration) {
 	<-time.After(timeToRefresh)
 	logging.Verbosef("ephemeral certificate for instance %s will expire soon, refreshing now.", instance)
-	if _, _, err := c.refreshCfg(instance); err != nil {
+	if _, _, _, err := c.refreshCfg(instance); err != nil {
 		logging.Errorf("failed to refresh the ephemeral certificate for %s before expiring: %v", instance, err)
 	}
 }
@@ -264,42 +269,44 @@ func isExpired(cfg *tls.Config) bool {
 	return time.Now().After(cfg.Certificates[0].Leaf.NotAfter)
 }
 
-func (c *Client) cachedCfg(instance string) (string, *tls.Config) {
+func (c *Client) cachedCfg(instance string) (string, *tls.Config, string) {
 	c.cacheL.RLock()
 	ret, ok := c.cfgCache[instance]
 	c.cacheL.RUnlock()
 
 	// Don't waste time returning an expired/invalid cert.
 	if !ok || ret.err != nil || isExpired(ret.cfg) {
-		return "", nil
+		return "", nil, ""
 	}
-	return ret.addr, ret.cfg
+	return ret.addr, ret.cfg, ret.version
 }
 
-// Dial uses the configuration stored in the client to connect to an instance.
+// DialContext uses the configuration stored in the client to connect to an instance.
 // If this func returns a nil error the connection is correctly authenticated
 // to connect to the instance.
-func (c *Client) Dial(instance string) (net.Conn, error) {
-	if addr, cfg := c.cachedCfg(instance); cfg != nil {
-		ret, err := c.tryConnect(addr, cfg)
+func (c *Client) DialContext(ctx context.Context, instance string) (net.Conn, error) {
+	if addr, cfg, _ := c.cachedCfg(instance); cfg != nil {
+		ret, err := c.tryConnect(ctx, addr, cfg)
 		if err == nil {
 			return ret, err
 		}
 	}
 
-	addr, cfg, err := c.refreshCfg(instance)
+	addr, cfg, _, err := c.refreshCfg(instance)
 	if err != nil {
 		return nil, err
 	}
-	return c.tryConnect(addr, cfg)
+	return c.tryConnect(ctx, addr, cfg)
 }
 
-func (c *Client) tryConnect(addr string, cfg *tls.Config) (net.Conn, error) {
-	d := c.Dialer
-	if d == nil {
-		d = proxy.FromEnvironment().Dial
-	}
-	conn, err := d("tcp", addr)
+// Dial does the same as DialContext but using context.Background() as the context.
+func (c *Client) Dial(instance string) (net.Conn, error) {
+	return c.DialContext(context.Background(), instance)
+}
+
+func (c *Client) tryConnect(ctx context.Context, addr string, cfg *tls.Config) (net.Conn, error) {
+	dial := c.selectDialer()
+	conn, err := dial(ctx, "tcp", addr)
 	if err != nil {
 		return nil, err
 	}
@@ -324,6 +331,29 @@ func (c *Client) tryConnect(addr string, cfg *tls.Config) (net.Conn, error) {
 		return nil, err
 	}
 	return ret, nil
+}
+
+func (c *Client) selectDialer() func(context.Context, string, string) (net.Conn, error) {
+	if c.ContextDialer != nil {
+		return c.ContextDialer
+	}
+
+	if c.Dialer != nil {
+		return func(_ context.Context, net, addr string) (net.Conn, error) {
+			return c.Dialer(net, addr)
+		}
+	}
+
+	dialer := proxy.FromEnvironment()
+	if ctxDialer, ok := dialer.(proxy.ContextDialer); ok {
+		// although proxy.FromEnvironment() returns a Dialer interface which only has a Dial method,
+		// it happens in fact that method often returns ContextDialers.
+		return ctxDialer.DialContext
+	}
+
+	return func(_ context.Context, net, addr string) (net.Conn, error) {
+		return dialer.Dial(net, addr)
+	}
 }
 
 // NewConnSrc returns a chan which can be used to receive connections
@@ -355,13 +385,33 @@ func NewConnSrc(instance string, l net.Listener) <-chan Conn {
 	return ch
 }
 
+// InstanceVersion uses client cache to return instance version string.
+func (c *Client) InstanceVersion(instance string) (string, error) {
+	if _, cfg, version := c.cachedCfg(instance); cfg != nil {
+		return version, nil
+	}
+	_, _, version, err := c.refreshCfg(instance)
+	if err != nil {
+		return "", err
+	}
+	return version, nil
+}
+
 // Shutdown waits up to a given amount of time for all active connections to
 // close. Returns an error if there are still active connections after waiting
 // for the whole length of the timeout.
 func (c *Client) Shutdown(termTimeout time.Duration) error {
-	termTime := time.Now().Add(termTimeout)
-	for termTime.After(time.Now()) && atomic.LoadUint64(&c.ConnectionsCounter) > 0 {
-		time.Sleep(time.Second)
+	term, ticker := time.After(termTimeout), time.NewTicker(100*time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			if atomic.LoadUint64(&c.ConnectionsCounter) > 0 {
+				continue
+			}
+		case <-term:
+		}
+		break
 	}
 
 	active := atomic.LoadUint64(&c.ConnectionsCounter)
