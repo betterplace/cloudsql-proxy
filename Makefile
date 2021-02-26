@@ -39,11 +39,11 @@ build-info:
 	@echo $(DOCKER_IMAGE)
 
 build:
-	docker build -f Dockerfile.alpine -t $(DOCKER_IMAGE) .
+	docker build --pull -f Dockerfile.alpine -t $(DOCKER_IMAGE) .
 	$(MAKE) build-info
 
 build-force:
-	docker build -f Dockerfile.alpine -t $(DOCKER_IMAGE) --no-cache .
+	docker build --pull -f Dockerfile.alpine -t $(DOCKER_IMAGE) --no-cache .
 	$(MAKE) build-info
 
 debug:
